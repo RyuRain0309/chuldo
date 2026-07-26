@@ -5,6 +5,10 @@ contextBridge.exposeInMainWorld('api', {
   stop: () => ipcRenderer.invoke('scraper:stop'),
   sendCommand: (command) => ipcRenderer.invoke('scraper:command', command),
   onData: (callback) => {
-    ipcRenderer.on('scraper:data', (_event, data) => callback(data));
+    const listener = (_event, data) => callback(data);
+    ipcRenderer.on('scraper:data', listener);
+    return () => ipcRenderer.removeListener('scraper:data', listener);
   },
+  loadRoster: () => ipcRenderer.invoke('roster:load'),
+  saveRoster: (rows) => ipcRenderer.invoke('roster:save', rows),
 });

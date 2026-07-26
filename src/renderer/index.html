@@ -2,26 +2,10 @@
 <html lang="ko">
 <head>
   <meta charset="UTF-8" />
-  <title>Chuldo - UI Automation</title>
-  <style>
-    body { font-family: sans-serif; margin: 16px; }
-    #log { white-space: pre-wrap; background: #111; color: #0f0; padding: 8px; height: 300px; overflow-y: auto; font-size: 12px; }
-    ul { padding-left: 20px; }
-    button { margin-right: 8px; }
-  </style>
+  <title>Chuldo - 출석 관리</title>
 </head>
 <body>
-  <h2>참가자 목록</h2>
-  <div>
-    <button id="btn-start">스크래퍼 시작</button>
-    <button id="btn-stop">스크래퍼 중지</button>
-    <button id="btn-poll">즉시 조회 (pollOnce)</button>
-  </div>
-  <ul id="participants"></ul>
-
-  <h3>로그</h3>
-  <div id="log"></div>
-
-  <script src="renderer.js"></script>
+  <div id="root"></div>
+  <script type="module" src="/main.jsx"></script>
 </body>
 </html>

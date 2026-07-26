@@ -1,5 +1,6 @@
 const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
+const fs = require('fs');
 const { spawn, exec } = require('child_process');
 
 let mainWindow = null;
@@ -81,15 +82,24 @@ function sendCommand(command) {
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 900,
-    height: 600,
+    width: 1000,
+    height: 700,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
     },
   });
-  mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
+
+  if (app.isPackaged) {
+    mainWindow.loadFile(path.join(__dirname, '..', '..', 'dist', 'renderer', 'index.html'));
+  } else {
+    mainWindow.loadURL('http://localhost:5173');
+  }
+}
+
+function getRosterPath() {
+  return path.join(app.getPath('userData'), 'roster.json');
 }
 
 ipcMain.handle('scraper:start', () => {
@@ -103,6 +113,19 @@ ipcMain.handle('scraper:stop', () => {
 });
 
 ipcMain.handle('scraper:command', (_event, command) => sendCommand(command));
+
+ipcMain.handle('roster:load', () => {
+  try {
+    return JSON.parse(fs.readFileSync(getRosterPath(), 'utf-8'));
+  } catch (err) {
+    return [];
+  }
+});
+
+ipcMain.handle('roster:save', (_event, rows) => {
+  fs.writeFileSync(getRosterPath(), JSON.stringify(rows, null, 2), 'utf-8');
+  return { ok: true };
+});
 
 app.whenReady().then(() => {
   createWindow();
