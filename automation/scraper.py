@@ -52,7 +52,9 @@ def parse_participant_name(raw_name):
     name = raw_name.split(',', 1)[0].strip()
     return {
         'name': name,
-        'audioMuted': '음소거' in raw_name,
+        # "음소거 해제됨"(음소거 아님)에도 "음소거"가 부분 문자열로 들어있어서
+        # 반드시 "음소거됨" 전체 문구로 검사해야 함
+        'audioMuted': '음소거됨' in raw_name,
         'videoOff': '비디오 꺼짐' in raw_name,
     }
 
