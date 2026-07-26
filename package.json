@@ -9,7 +9,7 @@
     "dev": "concurrently -k \"vite\" \"wait-on tcp:5173 && electron .\"",
     "start": "npm run dev",
     "build:renderer": "vite build",
-    "build:py": "cd automation && pyinstaller --onefile --distpath dist --workpath build --specpath build scraper.py",
+    "build:py": "cd automation && py -m PyInstaller --onefile --distpath dist --workpath build --specpath build scraper.py",
     "dist": "npm run build:renderer && npm run build:py && electron-builder"
   },
   "dependencies": {

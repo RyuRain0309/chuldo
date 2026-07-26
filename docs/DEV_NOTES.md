@@ -24,6 +24,13 @@
   → Windows Store 앱 실행 별칭(App Execution Alias)이 진짜 인터프리터 대신 실행돼서 생김.
   `python` 대신 `py` 런처 사용으로 회피 (`src/main/main.js`의 `getScraperCommand()`).
 
+- **`pip`, `pyinstaller` 등이 "명령을 찾을 수 없음"으로 실패 (하지만 `py`는 잘 됨)**
+  → `py.exe`(런처)는 python.org 설치 시 시스템 경로에 특별 등록돼서 PATH가 꼬여도 잘 잡히는
+  반면, `pip.exe`/`pyinstaller.exe` 같은 콘솔 스크립트는 파이썬 `Scripts` 폴더에 설치되는데
+  이 폴더가 PATH에 없으면 못 찾음. PATH를 고치는 대신 `py -m pip`, `py -m PyInstaller`처럼
+  **`-m`으로 모듈 실행**하면 Scripts/PATH를 거치지 않아서 안정적으로 동작함.
+  `package.json`의 `build:py`도 이 방식으로 되어 있음.
+
 - **한글이 깨져서 옴 (Python → Electron)**
   → Windows에서 파이썬이 파이프로 리다이렉트되면 OS 로케일 인코딩(cp949 등)을 쓰는데
   Electron은 UTF-8로 디코딩해서 불일치. `scraper.py` 최상단에서
