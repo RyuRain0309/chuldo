@@ -54,8 +54,10 @@ export default function ScraperPage({ onBack }) {
       <div className="mb-4 rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
         <h2 className="mb-2 text-sm font-semibold text-gray-600">참가자 목록</h2>
         <ul className="list-disc space-y-1 pl-5 text-sm text-gray-800">
-          {participants.map((name, i) => (
-            <li key={i}>{name}</li>
+          {participants.map((p, i) => (
+            <li key={i}>
+              {p.name} {p.audioMuted && '🔇'} {p.videoOff ? '📷꺼짐' : '📷켜짐'}
+            </li>
           ))}
         </ul>
       </div>

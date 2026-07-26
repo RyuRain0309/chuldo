@@ -41,12 +41,28 @@ def find_window_by_keywords(keywords):
     return None
 
 
+def parse_participant_name(raw_name):
+    """Zoom 참가자 항목의 접근성 이름을 파싱.
+
+    예: "Indian Lee,(호스트, 나), 컴퓨터 오디오 음소거됨,비디오 꺼짐, Press tab for more options"
+    이름은 첫 콤마 이전 부분 (역할 태그 괄호 안에도 콤마가 있어 콤마 전체 split은 안 됨).
+    음소거/비디오-꺼짐 문구가 "포함"돼 있는지로 판단 (켜짐/음소거 아님 상태의 정확한 문구는
+    아직 관측하지 못해서, 꺼짐/음소거 키워드가 없으면 켜짐/음소거 아님으로 간주하는 방식).
+    """
+    name = raw_name.split(',', 1)[0].strip()
+    return {
+        'name': name,
+        'audioMuted': '음소거' in raw_name,
+        'videoOff': '비디오 꺼짐' in raw_name,
+    }
+
+
 def collect_participants(window):
-    """창 안의 리스트 컨트롤에서 참가자 이름들을 수집."""
+    """창 안의 리스트 컨트롤에서 참가자 정보(이름/음소거/비디오 상태)를 수집."""
     list_control = window.ListControl(searchDepth=10)
     if not list_control.Exists(0):
         return []
-    return [item.Name for item in list_control.GetChildren() if item.Name]
+    return [parse_participant_name(item.Name) for item in list_control.GetChildren() if item.Name]
 
 
 def describe_control(control, depth):
@@ -85,6 +101,8 @@ def handle_command(command, keywords):
     action = command.get('action')
     window = find_window_by_keywords(keywords)
     if window is None:
+        if action == 'pollOnce':
+            return {'type': 'participants', 'found': False, 'participants': []}
         return {'type': 'error', 'action': action, 'message': 'target window not found'}
 
     try:

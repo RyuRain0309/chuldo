@@ -6,30 +6,40 @@ function buildExpectedName(row, order, separator) {
   return order.map((field) => row[field] ?? '').join(separator);
 }
 
-function matchStatus(row, order, separator, participants) {
+function findMatch(row, order, separator, participants) {
   const expected = buildExpectedName(row, order, separator);
-  if (expected && participants.includes(expected)) return 'exact';
-  if (row.name && participants.some((p) => p.includes(row.name))) return 'nameOnly';
-  return 'none';
+  if (expected) {
+    const exact = participants.find((p) => p.name === expected);
+    if (exact) return { status: 'exact', participant: exact };
+  }
+  if (row.name) {
+    const partial = participants.find((p) => p.name.includes(row.name));
+    if (partial) return { status: 'nameOnly', participant: partial };
+  }
+  return { status: 'none', participant: null };
 }
 
-function StatusBadge({ status }) {
-  if (status === 'exact') {
-    return (
-      <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">✓ 일치</span>
-    );
+function StatusBadge({ status, participant }) {
+  if (status === 'none') {
+    return <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-400">미확인</span>;
   }
-  if (status === 'nameOnly') {
-    return (
-      <span className="rounded-full bg-yellow-100 px-2 py-0.5 text-xs font-medium text-yellow-700">이름만 일치</span>
-    );
-  }
-  return <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-400">미확인</span>;
+  const label = status === 'exact' ? '✓ 일치' : '이름만 일치';
+  const badgeClass = status === 'exact' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700';
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${badgeClass}`}>{label}</span>
+      <span className={`text-xs ${participant.videoOff ? 'text-gray-400' : 'text-blue-600'}`}>
+        {participant.videoOff ? '📷 꺼짐' : '📷 켜짐'}
+      </span>
+      {participant.audioMuted && <span className="text-xs text-gray-400">🔇 음소거</span>}
+    </div>
+  );
 }
 
 export default function AttendancePage({ onBack }) {
   const [roster, setRoster] = useState([]);
   const [participants, setParticipants] = useState([]);
+  const [windowFound, setWindowFound] = useState(true);
   const [order, setOrder] = useState(['trainingNumber', 'affiliation', 'name']);
   const [separator, setSeparator] = useState('-');
   const [intervalSec, setIntervalSec] = useState(10);
@@ -43,8 +53,9 @@ export default function AttendancePage({ onBack }) {
 
   useEffect(() => {
     const unsubscribe = window.api.onData((data) => {
-      if (data.type === 'participants' && Array.isArray(data.participants)) {
-        setParticipants(data.participants);
+      if (data.type === 'participants') {
+        setWindowFound(Boolean(data.found));
+        setParticipants(Array.isArray(data.participants) ? data.participants : []);
       }
     });
     return unsubscribe;
@@ -185,6 +196,12 @@ export default function AttendancePage({ onBack }) {
         )}
       </div>
 
+      {!windowFound && (
+        <div className="mb-4 rounded-lg border border-yellow-300 bg-yellow-50 px-4 py-3 text-sm text-yellow-800">
+          ⚠️ Zoom 참가자 목록 창을 찾을 수 없어요. Zoom 회의에서 참가자 목록을 열어주세요.
+        </div>
+      )}
+
       <div className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
         <table className="w-full border-collapse text-sm">
           <thead>
@@ -196,16 +213,19 @@ export default function AttendancePage({ onBack }) {
             </tr>
           </thead>
           <tbody>
-            {roster.map((row, i) => (
-              <tr key={i} className="hover:bg-gray-50">
-                <td className="border-b border-gray-100 px-3 py-2">{row.trainingNumber}</td>
-                <td className="border-b border-gray-100 px-3 py-2">{row.affiliation}</td>
-                <td className="border-b border-gray-100 px-3 py-2">{row.name}</td>
-                <td className="border-b border-gray-100 px-3 py-2">
-                  <StatusBadge status={matchStatus(row, order, separator, participants)} />
-                </td>
-              </tr>
-            ))}
+            {roster.map((row, i) => {
+              const { status, participant } = findMatch(row, order, separator, participants);
+              return (
+                <tr key={i} className="hover:bg-gray-50">
+                  <td className="border-b border-gray-100 px-3 py-2">{row.trainingNumber}</td>
+                  <td className="border-b border-gray-100 px-3 py-2">{row.affiliation}</td>
+                  <td className="border-b border-gray-100 px-3 py-2">{row.name}</td>
+                  <td className="border-b border-gray-100 px-3 py-2">
+                    <StatusBadge status={status} participant={participant} />
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
