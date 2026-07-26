@@ -36,6 +36,16 @@
   Electron은 UTF-8로 디코딩해서 불일치. `scraper.py` 최상단에서
   `sys.stdin/stdout/stderr.reconfigure(encoding='utf-8')`로 고정.
 
+- **참가자 목록에서 스크롤 밖(화면에 안 보이는) 인원이 안 잡힘**
+  → Zoom 참가자 리스트가 UI 가상화(virtualization)돼 있어서, 스크롤로 렌더링된 적 없는
+  항목은 UI Automation 트리에 아예 존재하지 않음 (`GetChildren()`으로도 안 잡힘). 리스트를
+  맨 위로 되돌린 뒤 `ScrollPattern`으로 끝까지 스크롤하며 매 단계 보이는 항목을 이름 기준
+  누적 수집하고, 끝나면 다시 맨 위로 복원하도록 `collect_participants`를 수정함
+  (`automation/scraper.py`). 스크롤이 호스트의 실제 Zoom 창을 움직이므로, 자동 주기 갱신
+  간격을 아주 짧게 잡으면 참가자 패널이 자주 움직이는 게 보일 수 있음 (사용자 확인 후
+  "항상 적용" 방식으로 결정함). `poll_loop`가 이 함수를 try/except 없이 호출하므로, 스크롤
+  중 예외가 나도 죽지 않게 함수 내부에서 흡수함.
+
 - **"음소거 해제됨"을 음소거로 잘못 인식**
   → `'음소거' in raw_name`처럼 부분 문자열로 검사하면 "음소거 해제됨"에도 걸림.
   `'음소거됨'` 전체 문구로 검사해야 함 (`automation/scraper.py`의 `parse_participant_name`).

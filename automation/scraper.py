@@ -60,11 +60,48 @@ def parse_participant_name(raw_name):
 
 
 def collect_participants(window):
-    """창 안의 리스트 컨트롤에서 참가자 정보(이름/음소거/비디오 상태)를 수집."""
+    """창 안의 리스트 컨트롤에서 참가자 정보(이름/음소거/비디오 상태)를 수집.
+
+    참가자 목록은 UI 가상화(virtualization)돼 있어서, 스크롤로 화면에 보인 적 없는
+    항목은 UI Automation 트리에 아예 존재하지 않는다. 리스트를 맨 위로 되돌린 뒤
+    끝까지 스크롤하며 매 단계에서 보이는 항목을 이름 기준으로 누적 수집하고,
+    끝나면 스크롤 위치를 다시 맨 위로 복원한다(호스트 실제 화면이 움직이므로).
+    """
     list_control = window.ListControl(searchDepth=10)
     if not list_control.Exists(0):
         return []
-    return [parse_participant_name(item.Name) for item in list_control.GetChildren() if item.Name]
+
+    participants = {}
+
+    def collect_visible():
+        for item in list_control.GetChildren():
+            if item.Name:
+                parsed = parse_participant_name(item.Name)
+                participants.setdefault(parsed['name'], parsed)
+
+    collect_visible()
+
+    try:
+        scroll = list_control.GetScrollPattern()
+        if scroll is not None and scroll.VerticallyScrollable:
+            scroll.SetScrollPercent(auto.ScrollPattern.NoScrollValue, 0, waitTime=0.15)
+            collect_visible()
+            last_percent = scroll.VerticalScrollPercent
+            for _ in range(200):  # 안전장치: 무한 루프 방지
+                if not scroll.Scroll(auto.ScrollAmount.NoAmount, auto.ScrollAmount.LargeIncrement, waitTime=0.15):
+                    break
+                collect_visible()
+                percent = scroll.VerticalScrollPercent
+                if percent <= last_percent or percent >= 100:
+                    break
+                last_percent = percent
+            scroll.SetScrollPercent(auto.ScrollPattern.NoScrollValue, 0, waitTime=0.15)
+    except Exception:
+        # 스크롤 도중 창이 닫히는 등 실패해도 이미 모은 항목은 그대로 반환
+        # (poll_loop는 이 함수를 try/except 없이 호출하므로 여기서 반드시 흡수해야 함)
+        pass
+
+    return list(participants.values())
 
 
 def describe_control(control, depth):
