@@ -112,13 +112,21 @@ export default function RosterPage({ onBack }) {
       </p>
 
       <div className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
-        <table className="w-full border-collapse text-sm">
+        <table className="w-full table-fixed border-collapse text-sm">
+          <colgroup>
+            <col className="w-20" />
+            <col />
+            <col />
+            <col className="w-16" />
+          </colgroup>
           <thead>
             <tr className="bg-gray-100">
-              {COLUMN_LABELS.map((label) => (
+              {COLUMN_LABELS.map((label, i) => (
                 <th
                   key={label}
-                  className="border-b border-gray-200 px-3 py-2 text-left font-semibold text-gray-600"
+                  className={`border-b border-gray-200 px-3 py-2 text-left font-semibold text-gray-600 ${
+                    i < COLUMN_LABELS.length - 1 ? 'border-r' : ''
+                  }`}
                 >
                   {label}
                 </th>
@@ -129,8 +137,11 @@ export default function RosterPage({ onBack }) {
           <tbody>
             {rows.map((row, rowIndex) => (
               <tr key={row.id} className="hover:bg-gray-50">
-                {FIELDS.map((field) => (
-                  <td key={field} className="border-b border-gray-100 p-0">
+                {FIELDS.map((field, i) => (
+                  <td
+                    key={field}
+                    className={`border-b border-gray-100 p-0 ${i < FIELDS.length - 1 ? 'border-r border-gray-200' : ''}`}
+                  >
                     <input
                       value={row[field]}
                       onChange={(e) => updateCell(row.id, field, e.target.value)}

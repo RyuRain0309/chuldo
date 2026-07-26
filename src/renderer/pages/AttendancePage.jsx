@@ -37,7 +37,7 @@ function CameraBadge({ participant }) {
     return <span className="text-xs text-gray-300">-</span>;
   }
   return (
-    <div className="flex items-center gap-1.5">
+    <div className="flex items-center justify-center gap-1.5">
       <span
         className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-bold text-white ${
           participant.videoOff ? 'bg-red-500' : 'bg-green-500'
@@ -68,18 +68,24 @@ function ToggleSwitch({ checked, onChange }) {
   );
 }
 
+// 짧은 비프음 1개는 놓치기 쉬워서, 좀 더 눈에 띄게 3번 반복
 function playAlarmSound() {
   const AudioContextClass = window.AudioContext || window.webkitAudioContext;
   const ctx = new AudioContextClass();
-  const oscillator = ctx.createOscillator();
-  const gain = ctx.createGain();
-  oscillator.type = 'sine';
-  oscillator.frequency.value = 880;
-  gain.gain.value = 0.2;
-  oscillator.connect(gain);
-  gain.connect(ctx.destination);
-  oscillator.start();
-  oscillator.stop(ctx.currentTime + 0.3);
+  const beepDuration = 0.15;
+  const gap = 0.12;
+  for (let i = 0; i < 3; i++) {
+    const startTime = ctx.currentTime + i * (beepDuration + gap);
+    const oscillator = ctx.createOscillator();
+    const gain = ctx.createGain();
+    oscillator.type = 'square';
+    oscillator.frequency.value = 1000;
+    gain.gain.value = 0.3;
+    oscillator.connect(gain);
+    gain.connect(ctx.destination);
+    oscillator.start(startTime);
+    oscillator.stop(startTime + beepDuration);
+  }
 }
 
 export default function AttendancePage({ onBack }) {
@@ -93,7 +99,8 @@ export default function AttendancePage({ onBack }) {
   const [settingsOpen, setSettingsOpen] = useState(true);
   const [filter, setFilter] = useState('all');
   const [alarmEnabled, setAlarmEnabled] = useState(false);
-  const [alarmTargets, setAlarmTargets] = useState(new Set());
+  const [alarmOnCameraOff, setAlarmOnCameraOff] = useState(true);
+  const [alarmExcluded, setAlarmExcluded] = useState(new Set());
   const timerRef = useRef(null);
 
   useEffect(() => {
@@ -110,14 +117,17 @@ export default function AttendancePage({ onBack }) {
     return unsubscribe;
   }, []);
 
-  // 참가자 데이터가 새로 도착할 때마다(주기 갱신 or 직접 로딩) 알람 대상 중
-  // 미접속/카메라 꺼짐인 사람이 있으면 소리로 알림
+  // 참가자 데이터가 새로 도착할 때마다(주기 갱신 or 직접 로딩) 명단 전체 중
+  // (제외 목록 제외) 미접속인 사람이 있으면 소리로 알림 (미접속 감지는 항상 기본 동작)
+  // 카메라 꺼짐 감지는 alarmOnCameraOff로 켜고 끌 수 있음
   useEffect(() => {
-    if (!alarmEnabled || alarmTargets.size === 0) return;
+    if (!alarmEnabled) return;
     const triggered = roster.some((row, index) => {
-      if (!alarmTargets.has(index)) return false;
+      if (alarmExcluded.has(index)) return false;
       const { status, participant } = findMatch(row, order, separator, participants);
-      return status === 'none' || participant?.videoOff;
+      if (status === 'none') return true;
+      if (alarmOnCameraOff && participant?.videoOff) return true;
+      return false;
     });
     if (triggered) playAlarmSound();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -163,12 +173,8 @@ export default function AttendancePage({ onBack }) {
     { key: 'notConnected', label: '미접속자만' },
     { key: 'cameraOff', label: '카메라 꺼짐만' },
   ];
-  // 알람 대상으로 새로 고를 수 있는 건 현재 접속 중인 사람만, 이미 고른 사람은 나중에 접속이
-  // 끊겨도 목록에 남아있어야 알람을 끌 수 있어서 계속 보여줌
-  const alarmCandidates = rowsWithMatch.filter(({ index, status }) => status !== 'none' || alarmTargets.has(index));
-
-  function toggleAlarmTarget(index) {
-    setAlarmTargets((prev) => {
+  function toggleAlarmExcluded(index) {
+    setAlarmExcluded((prev) => {
       const next = new Set(prev);
       if (next.has(index)) next.delete(index);
       else next.add(index);
@@ -269,38 +275,19 @@ export default function AttendancePage({ onBack }) {
 
             <div className="border-t border-gray-100 pt-4">
               <p className="mb-2 text-xs font-semibold text-gray-500">알람 설정</p>
-              <label className="mb-3 flex items-center gap-2 text-sm text-gray-600">
+              <label className="flex items-center gap-2 text-sm text-gray-600">
                 <ToggleSwitch checked={alarmEnabled} onChange={() => setAlarmEnabled((v) => !v)} />
-                알람 활성화 (대상자가 미접속이거나 카메라가 꺼지면 소리로 알림)
+                미접속 감지 알림 활성화
               </label>
-
               {alarmEnabled && (
-                <div>
-                  <p className="mb-1 text-xs text-gray-500">
-                    알람 대상 (현재 접속 중인 사람만 새로 선택 가능)
+                <div className="mt-2 space-y-2">
+                  <label className="flex items-center gap-2 text-sm text-gray-600">
+                    <ToggleSwitch checked={alarmOnCameraOff} onChange={() => setAlarmOnCameraOff((v) => !v)} />
+                    카메라 꺼짐 알림 활성화
+                  </label>
+                  <p className="text-xs text-gray-500">
+                    기본적으로 명단 전체가 감시 대상입니다. 특정 인원을 알람에서 빼려면 아래 표의 "개별 알람" 칸에서 꺼주세요.
                   </p>
-                  {alarmCandidates.length === 0 ? (
-                    <p className="text-xs text-gray-400">
-                      현재 접속 중인 사람이 없습니다. 먼저 로딩해주세요.
-                    </p>
-                  ) : (
-                    <div className="flex flex-wrap gap-2">
-                      {alarmCandidates.map(({ index, row, status }) => (
-                        <label
-                          key={index}
-                          className="flex items-center gap-1.5 rounded-md border border-gray-300 px-2 py-1 text-sm text-gray-700"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={alarmTargets.has(index)}
-                            onChange={() => toggleAlarmTarget(index)}
-                          />
-                          {row.name}
-                          {status === 'none' && <span className="text-xs text-gray-400">(접속 끊김)</span>}
-                        </label>
-                      ))}
-                    </div>
-                  )}
                 </div>
               )}
             </div>
@@ -332,28 +319,44 @@ export default function AttendancePage({ onBack }) {
       </div>
 
       <div className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
-        <table className="w-full border-collapse text-sm">
+        <table className="w-full table-fixed border-collapse text-sm">
+          <colgroup>
+            <col className="w-16" />
+            <col className="w-56" />
+            <col className="w-40" />
+            <col />
+            <col />
+            {alarmEnabled && <col />}
+          </colgroup>
           <thead>
             <tr className="bg-gray-100">
-              <th className="border-b border-gray-200 px-3 py-2 text-left font-semibold text-gray-600">연번</th>
-              <th className="border-b border-gray-200 px-3 py-2 text-left font-semibold text-gray-600">소속</th>
-              <th className="border-b border-gray-200 px-3 py-2 text-left font-semibold text-gray-600">성함</th>
-              <th className="border-b border-gray-200 px-3 py-2 text-left font-semibold text-gray-600">접속 상태</th>
-              <th className="border-b border-gray-200 px-3 py-2 text-left font-semibold text-gray-600">카메라</th>
+              <th className="border-b border-gray-200 px-3 py-2 text-center font-semibold text-gray-600">연번</th>
+              <th className="border-b border-gray-200 px-3 py-2 text-center font-semibold text-gray-600">소속</th>
+              <th className="border-b border-gray-200 px-3 py-2 text-center font-semibold text-gray-600">성함</th>
+              <th className="border-b border-gray-200 px-3 py-2 text-center font-semibold text-gray-600">접속 상태</th>
+              <th className="border-b border-gray-200 px-3 py-2 text-center font-semibold text-gray-600">카메라</th>
+              {alarmEnabled && (
+                <th className="border-b border-gray-200 px-3 py-2 text-center font-semibold text-gray-600">개별 알람</th>
+              )}
             </tr>
           </thead>
           <tbody>
             {filteredRows.map(({ index, row, status, participant }) => (
               <tr key={index} className="hover:bg-gray-50">
-                <td className="border-b border-gray-100 px-3 py-2">{row.trainingNumber}</td>
-                <td className="border-b border-gray-100 px-3 py-2">{row.affiliation}</td>
-                <td className="border-b border-gray-100 px-3 py-2">{row.name}</td>
-                <td className="border-b border-gray-100 px-3 py-2">
+                <td className="border-b border-gray-100 px-3 py-2 text-center">{row.trainingNumber}</td>
+                <td className="border-b border-gray-100 px-3 py-2 text-center">{row.affiliation}</td>
+                <td className="border-b border-gray-100 px-3 py-2 text-center">{row.name}</td>
+                <td className="border-b border-gray-100 px-3 py-2 text-center">
                   <ConnectionBadge status={status} />
                 </td>
-                <td className="border-b border-gray-100 px-3 py-2">
+                <td className="border-b border-gray-100 px-3 py-2 text-center">
                   <CameraBadge participant={participant} />
                 </td>
+                {alarmEnabled && (
+                  <td className="border-b border-gray-100 px-3 py-2 text-center">
+                    <ToggleSwitch checked={!alarmExcluded.has(index)} onChange={() => toggleAlarmExcluded(index)} />
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>
