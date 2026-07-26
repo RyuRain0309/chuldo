@@ -31,7 +31,7 @@ function ConnectionBadge({ status }) {
   return <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-400">미접속</span>;
 }
 
-// 카메라 on/off는 색(초록/빨강) + 아이콘 + 텍스트를 전부 다르게 줘서 한눈에 구분되게 함
+// 카메라 on/off는 색(초록/빨강) 배경 + 텍스트로 구분되게 함 (이모지 없이)
 function CameraBadge({ participant }) {
   if (!participant) {
     return <span className="text-xs text-gray-300">-</span>;
@@ -39,15 +39,47 @@ function CameraBadge({ participant }) {
   return (
     <div className="flex items-center gap-1.5">
       <span
-        className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-bold text-white ${
+        className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-bold text-white ${
           participant.videoOff ? 'bg-red-500' : 'bg-green-500'
         }`}
       >
-        {participant.videoOff ? '🚫 카메라 꺼짐' : '🎥 카메라 켜짐'}
+        {participant.videoOff ? '카메라 꺼짐' : '카메라 켜짐'}
       </span>
-      {participant.audioMuted && <span className="text-xs text-gray-400">🔇</span>}
+      {participant.audioMuted && (
+        <span className="rounded-full bg-gray-200 px-2 py-0.5 text-xs text-gray-500">음소거</span>
+      )}
     </div>
   );
+}
+
+function ToggleSwitch({ checked, onChange }) {
+  return (
+    <button
+      type="button"
+      onClick={onChange}
+      className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${checked ? 'bg-blue-600' : 'bg-gray-300'}`}
+    >
+      <span
+        className={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${
+          checked ? 'translate-x-5' : 'translate-x-0'
+        }`}
+      />
+    </button>
+  );
+}
+
+function playAlarmSound() {
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  const ctx = new AudioContextClass();
+  const oscillator = ctx.createOscillator();
+  const gain = ctx.createGain();
+  oscillator.type = 'sine';
+  oscillator.frequency.value = 880;
+  gain.gain.value = 0.2;
+  oscillator.connect(gain);
+  gain.connect(ctx.destination);
+  oscillator.start();
+  oscillator.stop(ctx.currentTime + 0.3);
 }
 
 export default function AttendancePage({ onBack }) {
@@ -60,6 +92,8 @@ export default function AttendancePage({ onBack }) {
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(true);
   const [filter, setFilter] = useState('all');
+  const [alarmEnabled, setAlarmEnabled] = useState(false);
+  const [alarmTargets, setAlarmTargets] = useState(new Set());
   const timerRef = useRef(null);
 
   useEffect(() => {
@@ -75,6 +109,19 @@ export default function AttendancePage({ onBack }) {
     });
     return unsubscribe;
   }, []);
+
+  // 참가자 데이터가 새로 도착할 때마다(주기 갱신 or 직접 로딩) 알람 대상 중
+  // 미접속/카메라 꺼짐인 사람이 있으면 소리로 알림
+  useEffect(() => {
+    if (!alarmEnabled || alarmTargets.size === 0) return;
+    const triggered = roster.some((row, index) => {
+      if (!alarmTargets.has(index)) return false;
+      const { status, participant } = findMatch(row, order, separator, participants);
+      return status === 'none' || participant?.videoOff;
+    });
+    if (triggered) playAlarmSound();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [participants]);
 
   useEffect(() => {
     if (!autoRefresh) return undefined;
@@ -105,7 +152,7 @@ export default function AttendancePage({ onBack }) {
       ? buildExpectedName(roster[0], order, separator)
       : order.map((f) => FIELD_LABELS[f]).join(separator);
 
-  const rowsWithMatch = roster.map((row) => ({ row, ...findMatch(row, order, separator, participants) }));
+  const rowsWithMatch = roster.map((row, index) => ({ index, row, ...findMatch(row, order, separator, participants) }));
   const filteredRows = rowsWithMatch.filter(({ status, participant }) => {
     if (filter === 'notConnected') return status === 'none';
     if (filter === 'cameraOff') return status !== 'none' && participant?.videoOff;
@@ -116,6 +163,18 @@ export default function AttendancePage({ onBack }) {
     { key: 'notConnected', label: '미접속자만' },
     { key: 'cameraOff', label: '카메라 꺼짐만' },
   ];
+  // 알람 대상으로 새로 고를 수 있는 건 현재 접속 중인 사람만, 이미 고른 사람은 나중에 접속이
+  // 끊겨도 목록에 남아있어야 알람을 끌 수 있어서 계속 보여줌
+  const alarmCandidates = rowsWithMatch.filter(({ index, status }) => status !== 'none' || alarmTargets.has(index));
+
+  function toggleAlarmTarget(index) {
+    setAlarmTargets((prev) => {
+      const next = new Set(prev);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
+  }
 
   return (
     <div className="min-h-screen bg-gray-50 p-6">
@@ -152,19 +211,7 @@ export default function AttendancePage({ onBack }) {
               </div>
 
               <label className="flex items-center gap-2 text-sm text-gray-600">
-                <button
-                  type="button"
-                  onClick={() => setAutoRefresh((v) => !v)}
-                  className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${
-                    autoRefresh ? 'bg-blue-600' : 'bg-gray-300'
-                  }`}
-                >
-                  <span
-                    className={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${
-                      autoRefresh ? 'translate-x-5' : 'translate-x-0'
-                    }`}
-                  />
-                </button>
+                <ToggleSwitch checked={autoRefresh} onChange={() => setAutoRefresh((v) => !v)} />
                 자동 갱신
               </label>
 
@@ -219,6 +266,44 @@ export default function AttendancePage({ onBack }) {
                 정확 일치 판정에 쓰일 예시: <span className="font-mono text-gray-700">{preview}</span>
               </p>
             </div>
+
+            <div className="border-t border-gray-100 pt-4">
+              <p className="mb-2 text-xs font-semibold text-gray-500">알람 설정</p>
+              <label className="mb-3 flex items-center gap-2 text-sm text-gray-600">
+                <ToggleSwitch checked={alarmEnabled} onChange={() => setAlarmEnabled((v) => !v)} />
+                알람 활성화 (대상자가 미접속이거나 카메라가 꺼지면 소리로 알림)
+              </label>
+
+              {alarmEnabled && (
+                <div>
+                  <p className="mb-1 text-xs text-gray-500">
+                    알람 대상 (현재 접속 중인 사람만 새로 선택 가능)
+                  </p>
+                  {alarmCandidates.length === 0 ? (
+                    <p className="text-xs text-gray-400">
+                      현재 접속 중인 사람이 없습니다. 먼저 로딩해주세요.
+                    </p>
+                  ) : (
+                    <div className="flex flex-wrap gap-2">
+                      {alarmCandidates.map(({ index, row, status }) => (
+                        <label
+                          key={index}
+                          className="flex items-center gap-1.5 rounded-md border border-gray-300 px-2 py-1 text-sm text-gray-700"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={alarmTargets.has(index)}
+                            onChange={() => toggleAlarmTarget(index)}
+                          />
+                          {row.name}
+                          {status === 'none' && <span className="text-xs text-gray-400">(접속 끊김)</span>}
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -258,8 +343,8 @@ export default function AttendancePage({ onBack }) {
             </tr>
           </thead>
           <tbody>
-            {filteredRows.map(({ row, status, participant }, i) => (
-              <tr key={i} className="hover:bg-gray-50">
+            {filteredRows.map(({ index, row, status, participant }) => (
+              <tr key={index} className="hover:bg-gray-50">
                 <td className="border-b border-gray-100 px-3 py-2">{row.trainingNumber}</td>
                 <td className="border-b border-gray-100 px-3 py-2">{row.affiliation}</td>
                 <td className="border-b border-gray-100 px-3 py-2">{row.name}</td>
