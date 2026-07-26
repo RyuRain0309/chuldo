@@ -11,8 +11,9 @@ function getScraperCommand() {
     // 배포 단계: pyinstaller로 빌드된 exe를 resources 폴더에서 직접 실행
     return { cmd: path.join(process.resourcesPath, 'scraper.exe'), args: [] };
   }
-  // 개발 단계: 시스템 python으로 스크립트 실행
-  return { cmd: 'python', args: [path.join(__dirname, '..', '..', 'automation', 'scraper.py')] };
+  // 개발 단계: py 런처로 스크립트 실행
+  // ('python'은 Windows Store 별칭(App Execution Alias)과 충돌해 9009로 죽는 경우가 있어 'py' 사용)
+  return { cmd: 'py', args: [path.join(__dirname, '..', '..', 'automation', 'scraper.py')] };
 }
 
 function startScraper() {
