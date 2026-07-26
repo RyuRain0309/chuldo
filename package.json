@@ -5,6 +5,7 @@
   "main": "src/main/main.js",
   "private": true,
   "scripts": {
+    "postinstall": "node node_modules/electron/install.js",
     "dev": "concurrently -k \"vite\" \"wait-on tcp:5173 && electron .\"",
     "start": "npm run dev",
     "build:renderer": "vite build",
@@ -19,7 +20,7 @@
     "@tailwindcss/vite": "^4.3.3",
     "@vitejs/plugin-react": "^4.3.4",
     "concurrently": "^9.1.0",
-    "electron": "^43.2.0",
+    "electron": "42.3.3",
     "electron-builder": "^25.0.5",
     "tailwindcss": "^4.3.3",
     "vite": "^6.0.0",
