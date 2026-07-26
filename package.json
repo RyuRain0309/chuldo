@@ -1,0 +1,36 @@
+{
+  "name": "chuldo",
+  "version": "0.1.0",
+  "description": "Electron + Python hybrid app for Windows UI Automation (read/control UI elements of apps like Zoom)",
+  "main": "src/main/main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "build:py": "cd automation && pyinstaller --onefile --distpath dist --workpath build --specpath build scraper.py",
+    "dist": "npm run build:py && electron-builder"
+  },
+  "devDependencies": {
+    "electron": "^31.3.0",
+    "electron-builder": "^25.0.5"
+  },
+  "build": {
+    "appId": "com.chuldo.uiautomation",
+    "productName": "Chuldo",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "automation/dist/scraper.exe",
+        "to": "scraper.exe"
+      }
+    ],
+    "win": {
+      "target": "nsis"
+    }
+  }
+}

@@ -1,0 +1,7 @@
+node_modules/
+release/
+automation/dist/
+automation/build/
+automation/*.spec
+__pycache__/
+*.pyc
