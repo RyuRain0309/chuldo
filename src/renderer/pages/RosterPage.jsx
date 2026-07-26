@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 
 const FIELDS = ['trainingNumber', 'affiliation', 'name'];
-const COLUMN_LABELS = ['연수번호', '소속', '성함'];
+const COLUMN_LABELS = ['연번', '소속', '성함'];
 
 function emptyRow() {
   return { id: crypto.randomUUID(), trainingNumber: '', affiliation: '', name: '' };

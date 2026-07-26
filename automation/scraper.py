@@ -49,6 +49,28 @@ def collect_participants(window):
     return [item.Name for item in list_control.GetChildren() if item.Name]
 
 
+def describe_control(control, depth):
+    """컨트롤과 하위 컨트롤을 타입/이름/AutomationId까지 재귀적으로 덤프.
+    카메라 on/off 같은 상태가 UI Automation 트리 어디에 노출되는지 확인하기 위한 진단용.
+    """
+    info = {
+        'name': getattr(control, 'Name', '') or '',
+        'controlType': getattr(control, 'ControlTypeName', '') or '',
+        'automationId': getattr(control, 'AutomationId', '') or '',
+    }
+    if depth > 0:
+        info['children'] = [describe_control(child, depth - 1) for child in control.GetChildren()]
+    return info
+
+
+def dump_participant_tree(window):
+    """참가자 목록의 각 항목을 하위 컨트롤까지 포함해 덤프."""
+    list_control = window.ListControl(searchDepth=10)
+    if not list_control.Exists(0):
+        return {'error': 'list control not found'}
+    return [describe_control(item, depth=3) for item in list_control.GetChildren()]
+
+
 def find_control(window, automation_id=None, name=None):
     kwargs = {}
     if automation_id:
@@ -72,6 +94,13 @@ def handle_command(command, keywords):
                 'found': True,
                 'windowName': window.Name,
                 'participants': collect_participants(window),
+            }
+
+        if action == 'dumpParticipants':
+            return {
+                'type': 'participantsDump',
+                'windowName': window.Name,
+                'tree': dump_participant_tree(window),
             }
 
         ctrl = find_control(window, command.get('automationId'), command.get('name'))

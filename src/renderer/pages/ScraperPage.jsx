@@ -43,6 +43,12 @@ export default function ScraperPage({ onBack }) {
         >
           즉시 조회
         </button>
+        <button
+          onClick={() => window.api.sendCommand({ action: 'dumpParticipants' })}
+          className="rounded-md bg-gray-200 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-300"
+        >
+          구조 덤프 (진단용)
+        </button>
       </div>
 
       <div className="mb-4 rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
