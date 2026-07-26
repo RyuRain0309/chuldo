@@ -19,19 +19,33 @@ function findMatch(row, order, separator, participants) {
   return { status: 'none', participant: null };
 }
 
-function StatusBadge({ status, participant }) {
-  if (status === 'none') {
-    return <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-400">미확인</span>;
+function ConnectionBadge({ status }) {
+  if (status === 'exact') {
+    return <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">✓ 접속</span>;
   }
-  const label = status === 'exact' ? '✓ 일치' : '이름만 일치';
-  const badgeClass = status === 'exact' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700';
+  if (status === 'nameOnly') {
+    return (
+      <span className="rounded-full bg-yellow-100 px-2 py-0.5 text-xs font-medium text-yellow-700">이름만 일치</span>
+    );
+  }
+  return <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-400">미접속</span>;
+}
+
+// 카메라 on/off는 색(초록/빨강) + 아이콘 + 텍스트를 전부 다르게 줘서 한눈에 구분되게 함
+function CameraBadge({ participant }) {
+  if (!participant) {
+    return <span className="text-xs text-gray-300">-</span>;
+  }
   return (
-    <div className="flex flex-wrap items-center gap-1.5">
-      <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${badgeClass}`}>{label}</span>
-      <span className={`text-xs ${participant.videoOff ? 'text-gray-400' : 'text-blue-600'}`}>
-        {participant.videoOff ? '📷 꺼짐' : '📷 켜짐'}
+    <div className="flex items-center gap-1.5">
+      <span
+        className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-bold text-white ${
+          participant.videoOff ? 'bg-red-500' : 'bg-green-500'
+        }`}
+      >
+        {participant.videoOff ? '🚫 카메라 꺼짐' : '🎥 카메라 켜짐'}
       </span>
-      {participant.audioMuted && <span className="text-xs text-gray-400">🔇 음소거</span>}
+      {participant.audioMuted && <span className="text-xs text-gray-400">🔇</span>}
     </div>
   );
 }
@@ -45,6 +59,7 @@ export default function AttendancePage({ onBack }) {
   const [intervalSec, setIntervalSec] = useState(10);
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(true);
+  const [filter, setFilter] = useState('all');
   const timerRef = useRef(null);
 
   useEffect(() => {
@@ -89,6 +104,18 @@ export default function AttendancePage({ onBack }) {
     roster.length > 0
       ? buildExpectedName(roster[0], order, separator)
       : order.map((f) => FIELD_LABELS[f]).join(separator);
+
+  const rowsWithMatch = roster.map((row) => ({ row, ...findMatch(row, order, separator, participants) }));
+  const filteredRows = rowsWithMatch.filter(({ status, participant }) => {
+    if (filter === 'notConnected') return status === 'none';
+    if (filter === 'cameraOff') return status !== 'none' && participant?.videoOff;
+    return true;
+  });
+  const FILTERS = [
+    { key: 'all', label: '전체' },
+    { key: 'notConnected', label: '미접속자만' },
+    { key: 'cameraOff', label: '카메라 꺼짐만' },
+  ];
 
   return (
     <div className="min-h-screen bg-gray-50 p-6">
@@ -202,6 +229,23 @@ export default function AttendancePage({ onBack }) {
         </div>
       )}
 
+      <div className="mb-3 flex items-center gap-2">
+        {FILTERS.map((opt) => (
+          <button
+            key={opt.key}
+            onClick={() => setFilter(opt.key)}
+            className={`rounded-md px-3 py-1.5 text-sm ${
+              filter === opt.key ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+            }`}
+          >
+            {opt.label}
+          </button>
+        ))}
+        <span className="text-xs text-gray-400">
+          {filteredRows.length} / {roster.length}명
+        </span>
+      </div>
+
       <div className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
         <table className="w-full border-collapse text-sm">
           <thead>
@@ -209,23 +253,24 @@ export default function AttendancePage({ onBack }) {
               <th className="border-b border-gray-200 px-3 py-2 text-left font-semibold text-gray-600">연번</th>
               <th className="border-b border-gray-200 px-3 py-2 text-left font-semibold text-gray-600">소속</th>
               <th className="border-b border-gray-200 px-3 py-2 text-left font-semibold text-gray-600">성함</th>
-              <th className="border-b border-gray-200 px-3 py-2 text-left font-semibold text-gray-600">상태</th>
+              <th className="border-b border-gray-200 px-3 py-2 text-left font-semibold text-gray-600">접속 상태</th>
+              <th className="border-b border-gray-200 px-3 py-2 text-left font-semibold text-gray-600">카메라</th>
             </tr>
           </thead>
           <tbody>
-            {roster.map((row, i) => {
-              const { status, participant } = findMatch(row, order, separator, participants);
-              return (
-                <tr key={i} className="hover:bg-gray-50">
-                  <td className="border-b border-gray-100 px-3 py-2">{row.trainingNumber}</td>
-                  <td className="border-b border-gray-100 px-3 py-2">{row.affiliation}</td>
-                  <td className="border-b border-gray-100 px-3 py-2">{row.name}</td>
-                  <td className="border-b border-gray-100 px-3 py-2">
-                    <StatusBadge status={status} participant={participant} />
-                  </td>
-                </tr>
-              );
-            })}
+            {filteredRows.map(({ row, status, participant }, i) => (
+              <tr key={i} className="hover:bg-gray-50">
+                <td className="border-b border-gray-100 px-3 py-2">{row.trainingNumber}</td>
+                <td className="border-b border-gray-100 px-3 py-2">{row.affiliation}</td>
+                <td className="border-b border-gray-100 px-3 py-2">{row.name}</td>
+                <td className="border-b border-gray-100 px-3 py-2">
+                  <ConnectionBadge status={status} />
+                </td>
+                <td className="border-b border-gray-100 px-3 py-2">
+                  <CameraBadge participant={participant} />
+                </td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
