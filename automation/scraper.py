@@ -11,9 +11,12 @@ Electron이 자식 프로세스로 실행한다.
 
 import sys
 import json
+import re
 import time
 import threading
 import argparse
+import ctypes
+import ctypes.wintypes as wintypes
 
 # Windows에서 파이프로 리다이렉트되면 파이썬이 OS 로케일 인코딩(cp949 등)을 쓰는데,
 # Electron 쪽은 UTF-8로 디코딩하므로 여기서 무조건 UTF-8로 고정한다.
@@ -25,6 +28,19 @@ import uiautomation as auto
 
 DEFAULT_KEYWORDS = ['참가자', 'Participants']
 DEFAULT_POLL_INTERVAL = 300  # seconds
+
+WM_MOUSEWHEEL = 0x020A
+_user32 = ctypes.windll.user32
+_user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+_user32.PostMessageW.restype = wintypes.BOOL
+
+
+def post_wheel(hwnd, x, y, delta):
+    """실제 마우스 커서를 건드리지 않고, 창에 WM_MOUSEWHEEL 메시지만 전달(PostMessage)해
+    스크롤을 흉내낸다. (x, y)는 스크린 좌표. delta는 표준 1노치 단위인 120의 배수."""
+    wparam = (delta & 0xFFFF) << 16
+    lparam = ((y & 0xFFFF) << 16) | (x & 0xFFFF)
+    return bool(_user32.PostMessageW(hwnd, WM_MOUSEWHEEL, wparam, lparam))
 
 
 def emit(payload):
@@ -59,13 +75,27 @@ def parse_participant_name(raw_name):
     }
 
 
+def parse_total_count(window_name):
+    """창 이름("참가자(115)", "Participants (25)" 등)에서 괄호 안 총원 숫자를 추출.
+    못 찾으면 None (이 경우 스크롤 수집은 정체 감지로만 종료 시점을 판단)."""
+    match = re.search(r'\((\d+)\)', window_name or '')
+    return int(match.group(1)) if match else None
+
+
 def collect_participants(window):
     """창 안의 리스트 컨트롤에서 참가자 정보(이름/음소거/비디오 상태)를 수집.
 
     참가자 목록은 UI 가상화(virtualization)돼 있어서, 스크롤로 화면에 보인 적 없는
-    항목은 UI Automation 트리에 아예 존재하지 않는다. 리스트를 맨 위로 되돌린 뒤
-    끝까지 스크롤하며 매 단계에서 보이는 항목을 이름 기준으로 누적 수집하고,
-    끝나면 스크롤 위치를 다시 맨 위로 복원한다(호스트 실제 화면이 움직이므로).
+    항목은 UI Automation 트리에 아예 존재하지 않는다. 실측 결과 이 리스트는 ScrollPattern도
+    ItemContainerPattern도 지원하지 않아서, 창에 WM_MOUSEWHEEL 메시지를 직접
+    전달(PostMessage)해 스크롤을 흉내낸다 — 마우스 커서는 전혀 움직이지 않는다.
+
+    한 번에 휠 1노치(가장 작은 단위)씩만 보내서 한 스텝의 이동 폭을 화면 한 페이지보다
+    훨씬 작게 유지한다. 정확한 "1노치 = 몇 항목"인지는 몰라도 되는데, 매 스텝 보이는
+    항목을 이름 기준으로 누적(dedup)하기 때문에 스텝이 겹쳐도 무해하고, 다만 한 스텝이
+    한 화면 분량보다 크면 중간 항목이 통째로 안 보였을 수 있어 그것만 피하면 된다.
+    창 이름의 "(총원)" 숫자를 목표로 삼아 다 모이면 조기 종료하고, 끝나면 스크롤 위치를
+    다시 맨 위로 복원한다(호스트 실제 화면은 계속 움직임 — 커서만 안 건드릴 뿐).
     """
     list_control = window.ListControl(searchDepth=10)
     if not list_control.Exists(0):
@@ -81,25 +111,46 @@ def collect_participants(window):
 
     collect_visible()
 
-    try:
-        scroll = list_control.GetScrollPattern()
-        if scroll is not None and scroll.VerticallyScrollable:
-            scroll.SetScrollPercent(auto.ScrollPattern.NoScrollValue, 0, waitTime=0.15)
-            collect_visible()
-            last_percent = scroll.VerticalScrollPercent
-            for _ in range(200):  # 안전장치: 무한 루프 방지
-                if not scroll.Scroll(auto.ScrollAmount.NoAmount, auto.ScrollAmount.LargeIncrement, waitTime=0.15):
-                    break
-                collect_visible()
-                percent = scroll.VerticalScrollPercent
-                if percent <= last_percent or percent >= 100:
-                    break
-                last_percent = percent
-            scroll.SetScrollPercent(auto.ScrollPattern.NoScrollValue, 0, waitTime=0.15)
-    except Exception:
-        # 스크롤 도중 창이 닫히는 등 실패해도 이미 모은 항목은 그대로 반환
-        # (poll_loop는 이 함수를 try/except 없이 호출하므로 여기서 반드시 흡수해야 함)
-        pass
+    hwnd = window.NativeWindowHandle
+    total = parse_total_count(window.Name)
+    applied_notches = 0
+
+    if hwnd:
+        try:
+            rect = list_control.BoundingRectangle
+            if not rect.isempty():
+                x, y = rect.xcenter(), rect.ycenter()
+
+                stale_rounds = 0
+                for _ in range(600):  # 안전장치: 무한 루프 방지
+                    if total is not None and len(participants) >= total:
+                        break
+                    before = len(participants)
+                    post_wheel(hwnd, x, y, -120)
+                    applied_notches += 1
+                    time.sleep(0.08)  # 가상화된 항목이 렌더링될 시간
+                    collect_visible()
+                    if len(participants) == before:
+                        stale_rounds += 1
+                        if stale_rounds >= 6:  # 6번 연속 새 인원 없으면 끝까지 본 것으로 간주
+                            break
+                    else:
+                        stale_rounds = 0
+
+                if applied_notches:
+                    for _ in range(applied_notches):
+                        post_wheel(hwnd, x, y, 120)
+                        time.sleep(0.01)
+
+                if total is not None and len(participants) < total:
+                    print(
+                        f'[collect_participants] 총원({total})보다 적게 수집됨: {len(participants)}명',
+                        file=sys.stderr, flush=True,
+                    )
+        except Exception:
+            # 스크롤 도중 창이 닫히는 등 실패해도 이미 모은 항목은 그대로 반환
+            # (poll_loop는 이 함수를 try/except 없이 호출하므로 여기서 반드시 흡수해야 함)
+            pass
 
     return list(participants.values())
 
