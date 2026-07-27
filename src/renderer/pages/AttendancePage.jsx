@@ -104,16 +104,38 @@ export default function AttendancePage({ onBack }) {
   const [nextRefreshIn, setNextRefreshIn] = useState(null);
   const timerRef = useRef(null);
   const tickRef = useRef(null);
+  const autoRefreshRef = useRef(autoRefresh);
+  const intervalSecRef = useRef(intervalSec);
+
+  useEffect(() => {
+    autoRefreshRef.current = autoRefresh;
+  }, [autoRefresh]);
+
+  useEffect(() => {
+    intervalSecRef.current = intervalSec;
+  }, [intervalSec]);
 
   useEffect(() => {
     window.api.loadRoster().then(setRoster);
   }, []);
 
+  // 참가자 스크롤 수집에 십수 초씩 걸릴 수 있어서, 다음 자동 갱신은 "요청을 보낸 시점"이
+  // 아니라 "응답(참가자 데이터)을 받은 시점"부터 주기를 다시 세야 함. 그래서 고정
+  // setInterval 대신, 응답이 도착할 때마다 여기서 다음 pollOnce를 setTimeout으로 예약함.
   useEffect(() => {
     const unsubscribe = window.api.onData((data) => {
       if (data.type === 'participants') {
         setWindowFound(Boolean(data.found));
         setParticipants(Array.isArray(data.participants) ? data.participants : []);
+
+        if (autoRefreshRef.current) {
+          const seconds = Math.max(1, intervalSecRef.current);
+          setNextRefreshIn(seconds);
+          clearTimeout(timerRef.current);
+          timerRef.current = setTimeout(() => {
+            window.api.sendCommand({ action: 'pollOnce' });
+          }, seconds * 1000);
+        }
       }
     });
     return unsubscribe;
@@ -138,26 +160,22 @@ export default function AttendancePage({ onBack }) {
   useEffect(() => {
     if (!autoRefresh) {
       setNextRefreshIn(null);
+      clearTimeout(timerRef.current);
       return undefined;
     }
     window.api.start();
-    const seconds = Math.max(1, intervalSec);
-    setNextRefreshIn(seconds);
-
-    timerRef.current = setInterval(() => {
-      window.api.sendCommand({ action: 'pollOnce' });
-      setNextRefreshIn(seconds);
-    }, seconds * 1000);
+    setNextRefreshIn(null); // 첫 응답 오기 전엔 몇 초 남았는지 알 수 없음 (수집 중)
+    window.api.sendCommand({ action: 'pollOnce' }); // 응답이 오면 위 onData 핸들러가 다음 것을 예약함
 
     tickRef.current = setInterval(() => {
       setNextRefreshIn((prev) => (prev === null ? prev : Math.max(0, prev - 1)));
     }, 1000);
 
     return () => {
-      clearInterval(timerRef.current);
+      clearTimeout(timerRef.current);
       clearInterval(tickRef.current);
     };
-  }, [autoRefresh, intervalSec]);
+  }, [autoRefresh]);
 
   function loadOnce() {
     window.api.start();
@@ -221,8 +239,10 @@ export default function AttendancePage({ onBack }) {
               <label className="flex items-center gap-2 text-sm text-gray-600">
                 <ToggleSwitch checked={autoRefresh} onChange={() => setAutoRefresh((v) => !v)} />
                 자동 갱신
-                {autoRefresh && nextRefreshIn !== null && (
-                  <span className="text-xs text-gray-400">(다음 갱신까지 {nextRefreshIn}초)</span>
+                {autoRefresh && (
+                  <span className="text-xs text-gray-400">
+                    {nextRefreshIn !== null ? `(다음 갱신까지 ${nextRefreshIn}초)` : '(참가자 수집 중…)'}
+                  </span>
                 )}
               </label>
 
