@@ -1,31 +1,33 @@
 import { useEffect, useRef, useState } from 'react';
 
-const FIELD_LABELS = { trainingNumber: '연번', affiliation: '소속', name: '성함' };
+// 연번+성함이 모두 참가자 이름 문자열에 포함되면 출석 확정, 성함만 포함되면 확인 필요.
+// 동명이인 등으로 성함만으로 여러 명이 매칭될 수 있어 전부 찾아서(matches) 판정에 씀 —
+// 특히 같은 사람이 기기 2대로 중복 접속한 경우 카메라 상태를 합치는 데 필요함.
+function findMatch(row, participants) {
+  if (!row.name) return { status: 'none', participant: null };
 
-function buildExpectedName(row, order, separator) {
-  return order.map((field) => row[field] ?? '').join(separator);
-}
+  const matches = participants.filter((p) => p.name.includes(row.name));
+  if (matches.length === 0) return { status: 'none', participant: null };
 
-function findMatch(row, order, separator, participants) {
-  const expected = buildExpectedName(row, order, separator);
-  if (expected) {
-    const exact = participants.find((p) => p.name === expected);
-    if (exact) return { status: 'exact', participant: exact };
-  }
-  if (row.name) {
-    const partial = participants.find((p) => p.name.includes(row.name));
-    if (partial) return { status: 'nameOnly', participant: partial };
-  }
-  return { status: 'none', participant: null };
+  const hasNumber = row.trainingNumber != null && String(row.trainingNumber) !== '';
+  const status = hasNumber && matches.some((p) => p.name.includes(String(row.trainingNumber)))
+    ? 'confirmed'
+    : 'needsCheck';
+
+  // 중복 접속으로 여러 명이 매칭된 경우, 그중 하나라도 카메라가 켜져 있으면 켜진 것으로 처리
+  const cameraOn = matches.some((p) => !p.videoOff);
+  const participant = { ...matches[0], videoOff: !cameraOn };
+
+  return { status, participant };
 }
 
 function ConnectionBadge({ status }) {
-  if (status === 'exact') {
-    return <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">✓ 접속</span>;
+  if (status === 'confirmed') {
+    return <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">출석</span>;
   }
-  if (status === 'nameOnly') {
+  if (status === 'needsCheck') {
     return (
-      <span className="rounded-full bg-yellow-100 px-2 py-0.5 text-xs font-medium text-yellow-700">이름만 일치</span>
+      <span className="rounded-full bg-yellow-100 px-2 py-0.5 text-xs font-medium text-yellow-700">확인 필요</span>
     );
   }
   return <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-400">미접속</span>;
@@ -92,8 +94,6 @@ export default function AttendancePage({ onBack }) {
   const [roster, setRoster] = useState([]);
   const [participants, setParticipants] = useState([]);
   const [windowFound, setWindowFound] = useState(true);
-  const [order, setOrder] = useState(['trainingNumber', 'affiliation', 'name']);
-  const [separator, setSeparator] = useState('-');
   const [intervalSec, setIntervalSec] = useState(10);
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(true);
@@ -101,7 +101,9 @@ export default function AttendancePage({ onBack }) {
   const [alarmEnabled, setAlarmEnabled] = useState(false);
   const [alarmOnCameraOff, setAlarmOnCameraOff] = useState(true);
   const [alarmExcluded, setAlarmExcluded] = useState(new Set());
+  const [nextRefreshIn, setNextRefreshIn] = useState(null);
   const timerRef = useRef(null);
+  const tickRef = useRef(null);
 
   useEffect(() => {
     window.api.loadRoster().then(setRoster);
@@ -124,7 +126,7 @@ export default function AttendancePage({ onBack }) {
     if (!alarmEnabled) return;
     const triggered = roster.some((row, index) => {
       if (alarmExcluded.has(index)) return false;
-      const { status, participant } = findMatch(row, order, separator, participants);
+      const { status, participant } = findMatch(row, participants);
       if (status === 'none') return true;
       if (alarmOnCameraOff && participant?.videoOff) return true;
       return false;
@@ -134,12 +136,27 @@ export default function AttendancePage({ onBack }) {
   }, [participants]);
 
   useEffect(() => {
-    if (!autoRefresh) return undefined;
+    if (!autoRefresh) {
+      setNextRefreshIn(null);
+      return undefined;
+    }
     window.api.start();
+    const seconds = Math.max(1, intervalSec);
+    setNextRefreshIn(seconds);
+
     timerRef.current = setInterval(() => {
       window.api.sendCommand({ action: 'pollOnce' });
-    }, Math.max(1, intervalSec) * 1000);
-    return () => clearInterval(timerRef.current);
+      setNextRefreshIn(seconds);
+    }, seconds * 1000);
+
+    tickRef.current = setInterval(() => {
+      setNextRefreshIn((prev) => (prev === null ? prev : Math.max(0, prev - 1)));
+    }, 1000);
+
+    return () => {
+      clearInterval(timerRef.current);
+      clearInterval(tickRef.current);
+    };
   }, [autoRefresh, intervalSec]);
 
   function loadOnce() {
@@ -147,22 +164,7 @@ export default function AttendancePage({ onBack }) {
     window.api.sendCommand({ action: 'pollOnce' });
   }
 
-  function moveField(index, direction) {
-    setOrder((prev) => {
-      const next = [...prev];
-      const target = index + direction;
-      if (target < 0 || target >= next.length) return prev;
-      [next[index], next[target]] = [next[target], next[index]];
-      return next;
-    });
-  }
-
-  const preview =
-    roster.length > 0
-      ? buildExpectedName(roster[0], order, separator)
-      : order.map((f) => FIELD_LABELS[f]).join(separator);
-
-  const rowsWithMatch = roster.map((row, index) => ({ index, row, ...findMatch(row, order, separator, participants) }));
+  const rowsWithMatch = roster.map((row, index) => ({ index, row, ...findMatch(row, participants) }));
   const filteredRows = rowsWithMatch.filter(({ status, participant }) => {
     if (filter === 'notConnected') return status === 'none';
     if (filter === 'cameraOff') return status !== 'none' && participant?.videoOff;
@@ -219,6 +221,9 @@ export default function AttendancePage({ onBack }) {
               <label className="flex items-center gap-2 text-sm text-gray-600">
                 <ToggleSwitch checked={autoRefresh} onChange={() => setAutoRefresh((v) => !v)} />
                 자동 갱신
+                {autoRefresh && nextRefreshIn !== null && (
+                  <span className="text-xs text-gray-400">(다음 갱신까지 {nextRefreshIn}초)</span>
+                )}
               </label>
 
               <button
@@ -227,50 +232,6 @@ export default function AttendancePage({ onBack }) {
               >
                 직접 로딩
               </button>
-            </div>
-
-            <div className="border-t border-gray-100 pt-4">
-              <p className="mb-2 text-xs font-semibold text-gray-500">이름 매칭 설정</p>
-              <div className="mb-2 flex flex-wrap items-center gap-4">
-                <div>
-                  <p className="mb-1 text-xs text-gray-500">순서</p>
-                  <div className="flex gap-2">
-                    {order.map((field, i) => (
-                      <div
-                        key={field}
-                        className="flex items-center gap-1 rounded-md border border-gray-300 px-2 py-1 text-sm"
-                      >
-                        <span>{FIELD_LABELS[field]}</span>
-                        <button
-                          onClick={() => moveField(i, -1)}
-                          disabled={i === 0}
-                          className="text-gray-400 hover:text-gray-700 disabled:opacity-30"
-                        >
-                          ↑
-                        </button>
-                        <button
-                          onClick={() => moveField(i, 1)}
-                          disabled={i === order.length - 1}
-                          className="text-gray-400 hover:text-gray-700 disabled:opacity-30"
-                        >
-                          ↓
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                <div>
-                  <p className="mb-1 text-xs text-gray-500">구분자</p>
-                  <input
-                    value={separator}
-                    onChange={(e) => setSeparator(e.target.value)}
-                    className="w-20 rounded-md border border-gray-300 px-2 py-1 text-sm"
-                  />
-                </div>
-              </div>
-              <p className="text-xs text-gray-500">
-                정확 일치 판정에 쓰일 예시: <span className="font-mono text-gray-700">{preview}</span>
-              </p>
             </div>
 
             <div className="border-t border-gray-100 pt-4">

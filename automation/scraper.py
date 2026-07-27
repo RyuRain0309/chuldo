@@ -13,7 +13,6 @@ import sys
 import json
 import re
 import time
-import threading
 import argparse
 import ctypes
 import ctypes.wintypes as wintypes
@@ -27,7 +26,6 @@ sys.stderr.reconfigure(encoding='utf-8')
 import uiautomation as auto
 
 DEFAULT_KEYWORDS = ['참가자', 'Participants']
-DEFAULT_POLL_INTERVAL = 300  # seconds
 
 WM_MOUSEWHEEL = 0x020A
 _user32 = ctypes.windll.user32
@@ -149,7 +147,8 @@ def collect_participants(window):
                     )
         except Exception:
             # 스크롤 도중 창이 닫히는 등 실패해도 이미 모은 항목은 그대로 반환
-            # (poll_loop는 이 함수를 try/except 없이 호출하므로 여기서 반드시 흡수해야 함)
+            # (실패해서 예외를 그냥 던지면 handle_command가 이미 모은 참가자 목록 없이
+            # error 타입만 반환하게 되므로, 여기서 흡수하고 부분 결과라도 돌려줌)
             pass
 
     return list(participants.values())
@@ -245,33 +244,19 @@ def stdin_command_loop(keywords):
         emit(handle_command(command, keywords))
 
 
-def poll_loop(keywords, interval):
-    while True:
-        window = find_window_by_keywords(keywords)
-        if window is None:
-            emit({'type': 'participants', 'found': False, 'participants': []})
-        else:
-            emit({
-                'type': 'participants',
-                'found': True,
-                'windowName': window.Name,
-                'participants': collect_participants(window),
-            })
-        time.sleep(interval)
-
-
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--interval', type=int, default=DEFAULT_POLL_INTERVAL)
     parser.add_argument('--keywords', type=str, default=','.join(DEFAULT_KEYWORDS))
     args = parser.parse_args()
 
     keywords = [k for k in args.keywords.split(',') if k]
 
-    threading.Thread(target=stdin_command_loop, args=(keywords,), daemon=True).start()
-
+    # 갱신 주기는 Electron 쪽(화면의 "자동 갱신"/"주기(초)")이 전적으로 결정한다.
+    # 여기서 자체적으로 타이머를 돌려 참가자 정보를 내보내면, 화면의 자동 갱신을 꺼놔도
+    # 이 프로세스가 켜져있는 한(앱 실행과 동시에 시작됨) 알아서 갱신되는 문제가 생김.
+    # 그래서 stdin으로 pollOnce 명령이 올 때만 응답하고, 자체 폴링 루프는 두지 않는다.
     try:
-        poll_loop(keywords, args.interval)
+        stdin_command_loop(keywords)
     except KeyboardInterrupt:
         pass
 
