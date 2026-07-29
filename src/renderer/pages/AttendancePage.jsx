@@ -100,12 +100,14 @@ export default function AttendancePage({ onBack }) {
   const [filter, setFilter] = useState('all');
   const [alarmEnabled, setAlarmEnabled] = useState(false);
   const [alarmOnCameraOff, setAlarmOnCameraOff] = useState(true);
+  const [cameraOffStack, setCameraOffStack] = useState(1);
   const [alarmExcluded, setAlarmExcluded] = useState(new Set());
   const [nextRefreshIn, setNextRefreshIn] = useState(null);
   const timerRef = useRef(null);
   const tickRef = useRef(null);
   const autoRefreshRef = useRef(autoRefresh);
   const intervalSecRef = useRef(intervalSec);
+  const cameraOffStreakRef = useRef({}); // 인덱스별 카메라 꺼짐 연속 감지 횟수
 
   useEffect(() => {
     autoRefreshRef.current = autoRefresh;
@@ -143,16 +145,35 @@ export default function AttendancePage({ onBack }) {
 
   // 참가자 데이터가 새로 도착할 때마다(주기 갱신 or 직접 로딩) 명단 전체 중
   // (제외 목록 제외) 미접속인 사람이 있으면 소리로 알림 (미접속 감지는 항상 기본 동작)
-  // 카메라 꺼짐 감지는 alarmOnCameraOff로 켜고 끌 수 있음
+  // 카메라 꺼짐 감지는 alarmOnCameraOff로 켜고 끌 수 있고, 바로 알리지 않고 cameraOffStack에
+  // 지정한 횟수만큼 연속으로 꺼진 상태가 감지돼야 알림. 중간에 카메라가 켜지면 그 사람의
+  // 연속 횟수는 0으로 초기화됨. 모든 사람을 다 순회해야 각자의 연속 횟수가 정확히 갱신되므로
+  // (일부만 보고 멈추는 some 대신) forEach로 전부 훑는다.
   useEffect(() => {
     if (!alarmEnabled) return;
-    const triggered = roster.some((row, index) => {
-      if (alarmExcluded.has(index)) return false;
+    const streaks = cameraOffStreakRef.current;
+    const threshold = Math.max(1, cameraOffStack);
+    let triggered = false;
+
+    roster.forEach((row, index) => {
+      if (alarmExcluded.has(index)) return;
       const { status, participant } = findMatch(row, participants);
-      if (status === 'none') return true;
-      if (alarmOnCameraOff && participant?.videoOff) return true;
-      return false;
+
+      if (status === 'none') {
+        triggered = true; // 미접속 감지는 항상 기본 동작(스택 없이 즉시)
+        return;
+      }
+
+      if (!alarmOnCameraOff) return;
+
+      if (participant?.videoOff) {
+        streaks[index] = (streaks[index] || 0) + 1;
+        if (streaks[index] >= threshold) triggered = true;
+      } else {
+        streaks[index] = 0; // 카메라 켜짐 감지 -> 초기화
+      }
     });
+
     if (triggered) playAlarmSound();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [participants]);
@@ -186,12 +207,14 @@ export default function AttendancePage({ onBack }) {
   const filteredRows = rowsWithMatch.filter(({ status, participant }) => {
     if (filter === 'notConnected') return status === 'none';
     if (filter === 'cameraOff') return status !== 'none' && participant?.videoOff;
+    if (filter === 'attention') return status === 'none' || participant?.videoOff;
     return true;
   });
   const FILTERS = [
     { key: 'all', label: '전체' },
     { key: 'notConnected', label: '미접속자만' },
     { key: 'cameraOff', label: '카메라 꺼짐만' },
+    { key: 'attention', label: '미접속+카메라 꺼짐' },
   ];
   function toggleAlarmExcluded(index) {
     setAlarmExcluded((prev) => {
@@ -266,6 +289,19 @@ export default function AttendancePage({ onBack }) {
                     <ToggleSwitch checked={alarmOnCameraOff} onChange={() => setAlarmOnCameraOff((v) => !v)} />
                     카메라 꺼짐 알림 활성화
                   </label>
+                  {alarmOnCameraOff && (
+                    <label className="flex items-center gap-2 text-sm text-gray-600">
+                      <span>연속</span>
+                      <input
+                        type="number"
+                        min="1"
+                        value={cameraOffStack}
+                        onChange={(e) => setCameraOffStack(Math.max(1, Number(e.target.value)))}
+                        className="w-16 rounded-md border border-gray-300 px-2 py-1 text-sm"
+                      />
+                      <span>번 감지되면 알림 (중간에 켜지면 초기화)</span>
+                    </label>
+                  )}
                   <p className="text-xs text-gray-500">
                     기본적으로 명단 전체가 감시 대상입니다. 특정 인원을 알람에서 빼려면 아래 표의 "개별 알람" 칸에서 꺼주세요.
                   </p>

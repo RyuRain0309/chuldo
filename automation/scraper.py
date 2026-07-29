@@ -27,18 +27,35 @@ import uiautomation as auto
 
 DEFAULT_KEYWORDS = ['참가자', 'Participants']
 
-WM_MOUSEWHEEL = 0x020A
+WM_KEYDOWN = 0x0100
+WM_KEYUP = 0x0101
+VK_PRIOR = 0x21  # Page Up
+VK_NEXT = 0x22  # Page Down
+MAPVK_VK_TO_VSC = 0
+
 _user32 = ctypes.windll.user32
 _user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
 _user32.PostMessageW.restype = wintypes.BOOL
+_user32.MapVirtualKeyW.argtypes = [wintypes.UINT, wintypes.UINT]
+_user32.MapVirtualKeyW.restype = wintypes.UINT
 
 
-def post_wheel(hwnd, x, y, delta):
-    """실제 마우스 커서를 건드리지 않고, 창에 WM_MOUSEWHEEL 메시지만 전달(PostMessage)해
-    스크롤을 흉내낸다. (x, y)는 스크린 좌표. delta는 표준 1노치 단위인 120의 배수."""
-    wparam = (delta & 0xFFFF) << 16
-    lparam = ((y & 0xFFFF) << 16) | (x & 0xFFFF)
-    return bool(_user32.PostMessageW(hwnd, WM_MOUSEWHEEL, wparam, lparam))
+def _key_lparam(vk, is_keyup):
+    scan_code = _user32.MapVirtualKeyW(vk, MAPVK_VK_TO_VSC) & 0xFF
+    lparam = 1  # repeat count
+    lparam |= (scan_code & 0xFF) << 16
+    lparam |= 1 << 24  # 확장키 플래그 (Page Up/Down은 확장키)
+    if is_keyup:
+        lparam |= 1 << 30
+        lparam |= 1 << 31
+    return lparam
+
+
+def post_key(hwnd, vk):
+    """실제 키보드 포커스나 창 활성화를 건드리지 않고, 창에 키 입력 메시지만
+    전달(PostMessage)한다. SetFocus를 안 부르므로 창이 앞으로 튀어나오지 않는다."""
+    _user32.PostMessageW(hwnd, WM_KEYDOWN, vk, _key_lparam(vk, False))
+    _user32.PostMessageW(hwnd, WM_KEYUP, vk, _key_lparam(vk, True))
 
 
 def emit(payload):
@@ -85,15 +102,19 @@ def collect_participants(window):
 
     참가자 목록은 UI 가상화(virtualization)돼 있어서, 스크롤로 화면에 보인 적 없는
     항목은 UI Automation 트리에 아예 존재하지 않는다. 실측 결과 이 리스트는 ScrollPattern도
-    ItemContainerPattern도 지원하지 않아서, 창에 WM_MOUSEWHEEL 메시지를 직접
-    전달(PostMessage)해 스크롤을 흉내낸다 — 마우스 커서는 전혀 움직이지 않는다.
+    ItemContainerPattern도 지원하지 않는다. 마우스 휠(WM_MOUSEWHEEL)을 PostMessage로
+    보내는 방식이 먼저 됐지만(커서 안 건드리고), 노치 1번이 몇 항목인지 몰라서 안전하게
+    가려면 스텝을 잘게 쪼개야 했고 그만큼 느렸음(참가자 많으면 15초 안팎). 실측 결과 Page
+    Down 키(WM_KEYDOWN/WM_KEYUP, VK_NEXT)도 PostMessage로 보내면 (1) 리스트가 실제로
+    스크롤되고 (2) SetFocus를 안 부르므로 창이 활성화(포커스 뺏김)되지 않는 걸 확인해서,
+    이 방식으로 교체함 (`post_key`). Page Down은 관례적으로 한 번에 거의 한 페이지만큼
+    스크롤하면서 마지막 줄 1개 정도를 다음 페이지에도 겹쳐 보여주는 게 표준 동작이라,
+    노치와 달리 크기를 추측/보정할 필요가 없어 휠 방식보다 훨씬 빠르다.
 
-    한 번에 휠 1노치(가장 작은 단위)씩만 보내서 한 스텝의 이동 폭을 화면 한 페이지보다
-    훨씬 작게 유지한다. 정확한 "1노치 = 몇 항목"인지는 몰라도 되는데, 매 스텝 보이는
-    항목을 이름 기준으로 누적(dedup)하기 때문에 스텝이 겹쳐도 무해하고, 다만 한 스텝이
-    한 화면 분량보다 크면 중간 항목이 통째로 안 보였을 수 있어 그것만 피하면 된다.
-    창 이름의 "(총원)" 숫자를 목표로 삼아 다 모이면 조기 종료하고, 끝나면 스크롤 위치를
-    다시 맨 위로 복원한다(호스트 실제 화면은 계속 움직임 — 커서만 안 건드릴 뿐).
+    그래도 "겹치면 안전하다"는 원칙은 그대로 적용한다: Page Down 전/후 화면에 보이는
+    인원이 하나라도 겹치면 그 사이 구간은 안 건너뛴 게 보장됨. 창 이름의 "(총원)" 숫자를
+    목표로 삼아 다 모이면 조기 종료하고, 끝나면 스크롤 위치를 다시 맨 위로 복원한다
+    (호스트 실제 화면은 계속 움직임 — 포커스/커서만 안 건드릴 뿐).
     """
     list_control = window.ListControl(searchDepth=10)
     if not list_control.Exists(0):
@@ -101,50 +122,63 @@ def collect_participants(window):
 
     participants = {}
 
-    def collect_visible():
+    def visible_names():
+        names = set()
         for item in list_control.GetChildren():
             if item.Name:
                 parsed = parse_participant_name(item.Name)
                 participants.setdefault(parsed['name'], parsed)
+                names.add(parsed['name'])
+        return names
 
-    collect_visible()
+    prev_visible = visible_names()
 
     hwnd = window.NativeWindowHandle
     total = parse_total_count(window.Name)
-    applied_notches = 0
+    applied_pagedowns = 0
 
     if hwnd:
         try:
-            rect = list_control.BoundingRectangle
-            if not rect.isempty():
-                x, y = rect.xcenter(), rect.ycenter()
+            stale_rounds = 0
 
-                stale_rounds = 0
-                for _ in range(600):  # 안전장치: 무한 루프 방지
-                    if total is not None and len(participants) >= total:
+            for _ in range(200):  # 안전장치: 무한 루프 방지 (Page Down 단위라 노치보다 훨씬 적게 필요)
+                if total is not None and len(participants) >= total:
+                    break
+                before = len(participants)
+
+                post_key(hwnd, VK_NEXT)
+                applied_pagedowns += 1
+                time.sleep(0.12)  # 한 페이지 분량 렌더링될 시간
+
+                curr_visible = visible_names()
+                overlap = len(prev_visible & curr_visible)
+                prev_visible = curr_visible
+
+                if len(participants) == before:
+                    stale_rounds += 1
+                    if stale_rounds >= 4:  # 4번 연속 새 인원 없으면 끝까지 본 것으로 간주
                         break
-                    before = len(participants)
-                    post_wheel(hwnd, x, y, -120)
-                    applied_notches += 1
-                    time.sleep(0.08)  # 가상화된 항목이 렌더링될 시간
-                    collect_visible()
-                    if len(participants) == before:
-                        stale_rounds += 1
-                        if stale_rounds >= 6:  # 6번 연속 새 인원 없으면 끝까지 본 것으로 간주
-                            break
-                    else:
-                        stale_rounds = 0
+                else:
+                    stale_rounds = 0
 
-                if applied_notches:
-                    for _ in range(applied_notches):
-                        post_wheel(hwnd, x, y, 120)
-                        time.sleep(0.01)
-
-                if total is not None and len(participants) < total:
+                if overlap == 0 and before > 0:
+                    # 겹치는 항목이 하나도 없으면 중간 구간을 건너뛰었을 수 있음 —
+                    # 흔치 않은 경우라 별도 복구 로직 없이 로그만 남겨서 나중에 알 수 있게 함
                     print(
-                        f'[collect_participants] 총원({total})보다 적게 수집됨: {len(participants)}명',
+                        '[collect_participants] Page Down 스텝에서 겹침 0 감지(건너뛰었을 수 있음)',
                         file=sys.stderr, flush=True,
                     )
+
+            if applied_pagedowns:
+                for _ in range(applied_pagedowns):
+                    post_key(hwnd, VK_PRIOR)
+                    time.sleep(0.02)
+
+            if total is not None and len(participants) < total:
+                print(
+                    f'[collect_participants] 총원({total})보다 적게 수집됨: {len(participants)}명',
+                    file=sys.stderr, flush=True,
+                )
         except Exception:
             # 스크롤 도중 창이 닫히는 등 실패해도 이미 모은 항목은 그대로 반환
             # (실패해서 예외를 그냥 던지면 handle_command가 이미 모은 참가자 목록 없이
