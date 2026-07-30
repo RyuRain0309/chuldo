@@ -116,8 +116,20 @@ def collect_participants(window):
         for item in list_control.GetChildren():
             if item.Name:
                 parsed = parse_participant_name(item.Name)
-                participants.setdefault(parsed['name'], parsed)
-                names.add(parsed['name'])
+                name = parsed['name']
+                names.add(name)
+                existing = participants.get(name)
+                if existing is None:
+                    participants[name] = parsed
+                else:
+                    # 동명이인 중복 접속 등으로 같은 이름이 또 관측된 경우, setdefault로
+                    # 처음 값만 고정해버리면 나중에 카메라 켜진 걸 관측해도 무시돼버림.
+                    # 카메라는 "한 번이라도 켜진 적 있으면 켜짐"으로 병합, 음소거는 최신 값 사용.
+                    participants[name] = {
+                        'name': name,
+                        'audioMuted': parsed['audioMuted'],
+                        'videoOff': existing['videoOff'] and parsed['videoOff'],
+                    }
         return names
 
     prev_visible = visible_names()

@@ -39,18 +39,13 @@ function CameraBadge({ participant }) {
     return <span className="text-xs text-gray-300">-</span>;
   }
   return (
-    <div className="flex items-center justify-center gap-1.5">
-      <span
-        className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-bold text-white ${
-          participant.videoOff ? 'bg-red-500' : 'bg-green-500'
-        }`}
-      >
-        {participant.videoOff ? '카메라 꺼짐' : '카메라 켜짐'}
-      </span>
-      {participant.audioMuted && (
-        <span className="rounded-full bg-gray-200 px-2 py-0.5 text-xs text-gray-500">음소거</span>
-      )}
-    </div>
+    <span
+      className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-bold text-white ${
+        participant.videoOff ? 'bg-red-500' : 'bg-green-500'
+      }`}
+    >
+      {participant.videoOff ? '카메라 꺼짐' : '카메라 켜짐'}
+    </span>
   );
 }
 

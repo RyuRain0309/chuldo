@@ -70,6 +70,16 @@
   `debug_postmessage.py`, `debug_pagedown.py`)는 커밋 대상 아님 — 비슷한 문제 다시
   생기면 참고용으로만.
 
+- **동명이인(또는 같은 사람 중복 접속)일 때 카메라 켜짐이 무시되고 계속 꺼짐으로 나옴**
+  → `collect_participants`의 `visible_names()`가 스크롤하며 이름별로 참가자를 모을 때
+  `participants.setdefault(name, parsed)`를 썼는데, `setdefault`는 이미 그 키가 있으면
+  값을 안 바꾼다. 그래서 같은 이름을 스크롤 중 여러 번(혹은 동시에 2명) 관측해도 **처음
+  발견한 값만 고정**되고, 나중에/동시에 관측된 카메라 켜짐 정보는 그냥 버려짐 — 화면(React)
+  쪽 병합 로직(`AttendancePage.jsx`의 `findMatch`, "하나라도 켜져있으면 켜짐")은 원래
+  의도대로 짜여있었지만, 그 이전에 Python 단계에서 이미 정보가 유실돼서 무용지물이었음.
+  `setdefault` 대신 명시적으로 병합하도록 고침: 카메라는 "한 번이라도 켜진 적 있으면
+  켜짐"(`existing['videoOff'] and parsed['videoOff']`), 음소거는 최신 관측값 사용.
+
 - **"자동 갱신"을 꺼놔도 화면이 저절로 갱신됨**
   → `scraper.py`가 원래 자체적으로 `DEFAULT_POLL_INTERVAL`(5분)마다 참가자 정보를 emit하는
   `poll_loop`를 앱 실행과 동시에 돌리고 있었음. 화면의 "자동 갱신" 토글/주기(초)와는 완전히
